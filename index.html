@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>DojoFinder</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="map">
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+   "use strict";
+
+// 1. Initialisation de la carte
+const map = L.map('map').setView([46.603354, 1.888334], 6);
+
+// 2. Ajout du fond de carte (OpenStreetMap)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+// 3. Chargement des données (Méthode moderne)
+async function loadDojos() {
+    try {
+        // Attention : Assure-toi que ton fichier s'appelle bien dojos.geojson
+        // et qu'il est dans le même dossier (ou dans un dossier data/)
+        const response = await fetch('data/data-es.geojson');
+        
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP ! statut : ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        L.geoJSON(data, {
+            onEachFeature: function (feature, layer) {
+                const equip_numero = feature.properties.equip_numero || "Numéro inconnu";
+                layer.bindPopup(`<b>${equip_numero}</b><br>${ville}`);
+            }
+        }).addTo(map);
+
+        console.log("Dojos chargés avec succès !");
+
+    } catch (error) {
+        console.error('Problème lors du chargement des dojos :', error);
+        alert("Impossible de charger le fichier dojos.geojson. Vérifie qu'il est bien au bon endroit !");
+    }
+}
+
+window.onload = loadDojos;
+</script>

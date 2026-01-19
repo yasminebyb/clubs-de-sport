@@ -1,59 +1,173 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>DojoFinder</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <div id="map">
-    </div>
+  <meta charset="UTF-8" />
+  <title>Carte</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./Chômeurs en Ile de France_files/leaflet.css" crossorigin="">
+  <style>
+    #map { width: 600px; height: 600px; }
+    #filters { margin: 10px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #filters button { padding: 6px 10px; cursor: pointer; }
+    #filters button.active { font-weight: 700; text-decoration: underline; }
+    #filters button.toggle.active { font-weight: 700; border: 2px solid #000; }
+  </style>
+  <script src="./Chômeurs en Ile de France_files/leaflet.js.télécharger" crossorigin=""></script>
+  <script>
+    "use strict";
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="script.js"></script>
+    window.onload = async () => {
+      const map = L.map('map', { center: [48.856667, 2.352222], zoom: 11 });
+
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 15,
+        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(map);
+
+      const layer = L.layerGroup().addTo(map);
+
+      const response = await fetch("data-es.geojson");
+      const data = await response.json();
+      const features = Array.isArray(data.features) ? data.features : [];
+
+      // Etat des filtres
+      let currentFilterKey = "";   // filtre texte (sur aps_name)
+      let handiOnly = false;       // toggle handiaccès
+
+      // --- Filtre texte UNIQUEMENT sur aps_name ---
+      function getApsName(feature) {
+        const p = feature?.properties || {};
+        return String(p.aps_name ?? "").toLowerCase();
+      }
+
+      // --- Handiaccès sur inst_acc_handi_bool ---
+      function isHandiAccessible(feature) {
+        const p = feature?.properties || {};
+        const v = p.inst_acc_handi_bool;
+
+        // robuste: bool, "true"/"false", 1/0, "1"/"0", "oui"/"non"
+        if (v === true) return true;
+        if (v === false || v == null) return false;
+
+        const s = String(v).trim().toLowerCase();
+        return (s === "true" || s === "1" || s === "oui" || s === "yes");
+      }
+
+      const FILTERS = {
+        "": [], // Tous
+        "salles": ["dojo", "dojang", "kwoon", "budokan", "honbu"],
+        "arts_martiaux": [
+          "karate", "judo", "aikido", "kendo", "iaido", "kobudo",
+          "ju jitsu", "jujutsu", "jiu jitsu", "bjj",
+          "taekwondo", "hapkido", "kung fu", "wushu", "wing chun", "krav maga"
+        ],
+        "karate": ["karate"],
+        "judo": ["judo"],
+        "aikido": ["aikido"],
+        "kendo": ["kendo"],
+        "taekwondo": ["taekwondo"],
+        "krav": ["krav maga"],
+        "bjj": ["bjj", "jiu jitsu", "jiu-jitsu", "jiujitsu", "jujutsu", "ju jitsu"]
+      };
+
+      function matchesTextFilter(feature, filterKey) {
+        if (filterKey === "") return true;
+        const text = getApsName(feature);
+        const terms = FILTERS[filterKey] || [];
+        return terms.some(t => text.includes(String(t).toLowerCase()));
+      }
+
+      function render() {
+        layer.clearLayers();
+
+        for (const feature of features) {
+          if (!feature?.geometry) continue;
+          if (feature.geometry.type !== "Point") continue;
+
+          // 1) filtre texte sur aps_name
+          if (!matchesTextFilter(feature, currentFilterKey)) continue;
+
+          // 2) filtre handiaccès (si activé)
+          if (handiOnly && !isHandiAccessible(feature)) continue;
+
+          const coords = feature.geometry.coordinates; // [lon, lat]
+          if (!Array.isArray(coords) || coords.length < 2) continue;
+
+          const props = feature.properties || {};
+
+          // Affichage: inst_nom
+          const instNom = props.inst_nom ?? "(inst_nom manquant)";
+          const handiTxt = isHandiAccessible(feature) ? "Oui" : "Non";
+
+          const latlng = [coords[1], coords[0]];
+          const marker = L.circleMarker(latlng, { radius: 4 });
+
+          // Tooltip: inst_nom + indication handiaccès
+          marker.bindTooltip(
+            `${String(instNom)} — Handiaccès: ${handiTxt}`,
+            { permanent: true, direction: "top", opacity: 0.9 }
+          );
+
+          // Popup: détails (aps_name + handiaccès)
+          marker.bindPopup(
+            `<b>${String(instNom)}</b><br>` +
+            `aps_name: ${String(props.aps_name ?? "(aps_name manquant)") }<br>` +
+            `Handiaccès: ${handiTxt}`
+          );
+
+          marker.addTo(layer);
+        }
+      }
+
+      // --- UI boutons ---
+      const filterButtons = document.querySelectorAll('#filters button[data-filter]');
+      const handiBtn = document.getElementById("handiToggle");
+
+      function setActiveFilterButton(btn) {
+        filterButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+
+      filterButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentFilterKey = btn.dataset.filter; // "" => Tous
+          setActiveFilterButton(btn);
+          render();
+        });
+      });
+
+      handiBtn.addEventListener("click", () => {
+        handiOnly = !handiOnly;
+        handiBtn.classList.toggle("active", handiOnly);
+        render();
+      });
+
+      // Initial
+      const btnAll = document.querySelector('#filters button[data-filter=""]');
+      if (btnAll) setActiveFilterButton(btnAll);
+      render();
+    };
+  </script>
+</head>
+
+<body>
+  <div id="filters">
+    <span>Filtres :</span>
+    <button type="button" data-filter="">Tous</button>
+    <button type="button" data-filter="salles">Dojo/Dojang/Kwoon/Budokan/Honbu</button>
+    <button type="button" data-filter="arts_martiaux">Arts martiaux (tous)</button>
+    <button type="button" data-filter="karate">Karate</button>
+    <button type="button" data-filter="judo">Judo</button>
+    <button type="button" data-filter="aikido">Aikido</button>
+    <button type="button" data-filter="kendo">Kendo</button>
+    <button type="button" data-filter="taekwondo">Taekwondo</button>
+    <button type="button" data-filter="bjj">Jiu-jitsu / BJJ</button>
+    <button type="button" data-filter="krav">Krav Maga</button>
+
+    <!-- Toggle indépendant -->
+    <button type="button" id="handiToggle" class="toggle">Handiaccès uniquement</button>
+  </div>
+
+  <div id="map"></div>
 </body>
 </html>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script>
-   "use strict";
-
-// 1. Initialisation de la carte
-const map = L.map('map').setView([46.603354, 1.888334], 6);
-
-// 2. Ajout du fond de carte (OpenStreetMap)
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-}).addTo(map);
-
-// 3. Chargement des données (Méthode moderne)
-async function loadDojos() {
-    try {
-        // Attention : Assure-toi que ton fichier s'appelle bien dojos.geojson
-        // et qu'il est dans le même dossier (ou dans un dossier data/)
-        const response = await fetch('data/data-es.geojson');
-        
-        if (!response.ok) {
-            throw new Error(`Erreur HTTP ! statut : ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        L.geoJSON(data, {
-            onEachFeature: function (feature, layer) {
-                const equip_numero = feature.properties.equip_numero || "Numéro inconnu";
-                layer.bindPopup(`<b>${equip_numero}</b><br>${ville}`);
-            }
-        }).addTo(map);
-
-        console.log("Dojos chargés avec succès !");
-
-    } catch (error) {
-        console.error('Problème lors du chargement des dojos :', error);
-        alert("Impossible de charger le fichier dojos.geojson. Vérifie qu'il est bien au bon endroit !");
-    }
-}
-
-window.onload = loadDojos;
-</script>

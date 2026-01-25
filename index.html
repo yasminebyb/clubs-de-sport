@@ -10,8 +10,336 @@
     <div id="map">
     </div>
 
+<<<<<<< Updated upstream
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="script.js"></script>
+=======
+    <!-- ================================================================
+         SIDEBAR - FILTRES ET CONTROLES
+         ================================================================ -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>DojoFinder</h1>
+      </div>
+
+      <div class="sidebar-content">
+        <!-- Filtres par type de pratique -->
+        <div class="filter-section">
+              <h3>Recherche</h3>
+          <div class="search-box">
+            <input 
+              type="text" 
+              id="searchInput" 
+              placeholder="Rechercher par ville..."
+              aria-label="Rechercher un club"
+            />
+            <button type="button" id="clearSearch" class="clear-search-btn" aria-label="Effacer la recherche">×</button>
+          </div>
+          <h3>Type de pratique</h3>
+          <div id="filters-list" class="button-group">
+            <button type="button" data-filter="">Tous</button>
+            <button type="button" data-filter="salles">Salles (Dojo/Budokan...)</button>
+            <button type="button" data-filter="arts_martiaux">Arts martiaux (tous)</button>
+            <button type="button" data-filter="karate">Karate</button>
+            <button type="button" data-filter="judo">Judo</button>
+            <button type="button" data-filter="aikido">Aikido</button>
+            <button type="button" data-filter="kendo">Kendo</button>
+            <button type="button" data-filter="taekwondo">Taekwondo</button>
+            <button type="button" data-filter="bjj">Jiu-jitsu / BJJ</button>
+            <button type="button" data-filter="krav">Krav Maga</button>
+          </div>
+        </div>
+
+        <!-- Filtre accessibilité -->
+        <div class="filter-section special-box">
+          <h3>Accessibilité</h3>
+          <button type="button" id="handiToggle" class="toggle-btn">
+            ♿ Handiaccès uniquement
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="reset-btn">Réinitialiser les filtres</button>
+      </div>
+    </aside>
+
+    <!-- ================================================================
+         ZONE CARTE
+         ================================================================ -->
+    <main class="map-wrapper">
+      <div id="compteur" class="floating-counter">
+        <span class="count-number">-</span> lieux trouvés
+      </div>
+      <div id="map"></div>
+    </main>
+
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <script>
+    "use strict";
+
+    window.onload = async () => {
+
+      // ================================================================
+      // INITIALISATION DE LA CARTE
+      // ================================================================
+      const map = L.map('map', { center: [48.856667, 2.352222], zoom: 10 });
+      let ville = "";
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(map);
+
+      const layer = L.layerGroup().addTo(map);
+
+      // ================================================================
+      // CHARGEMENT DES DONNÉES GEOJSON
+      // ================================================================
+      let features = [];
+      try {
+        const response = await fetch("dojos.geojson");
+        if (!response.ok) throw new Error("Fichier introuvable");
+        const data = await response.json();
+        features = Array.isArray(data.features) ? data.features : [];
+        console.log(`✅ ${features.length} lieux chargés.`);
+      } catch (e) {
+        console.error("Erreur chargement:", e);
+        alert("Impossible de charger 'dojos.geojson'. Vérifiez que le fichier est bien présent.");
+        return;
+      }
+
+      console.log(features);
+
+      // ================================================================
+      // ÉTAT DES FILTRES
+      // ================================================================
+      let currentFilterKey = "";
+      let handiOnly = false;
+
+      // ================================================================
+      // FONCTIONS UTILITAIRES
+      // ================================================================
+
+      /**
+       * Extrait et normalise le nom d'activité (aps_name)
+       * Gère à la fois les tableaux et les chaînes
+       */
+      function getApsName(feature) {
+        const p = feature?.properties || {};
+        const val = p.aps_name;
+        if (Array.isArray(val)) return val.join(" ").toLowerCase();
+        return String(val ?? "").toLowerCase();
+      }
+
+      /**
+       * Vérifie si l'équipement est accessible aux personnes handicapées
+       */
+      function isHandiAccessible(feature) {
+        const p = feature?.properties || {};
+        const v = p.inst_acc_handi_bool;
+        if (v === true) return true;
+        if (v === false || v == null) return false;
+        const s = String(v).trim().toLowerCase();
+        return (s === "true" || s === "1" || s === "oui" || s === "yes");
+      }
+
+      // ================================================================
+      // CONFIGURATION DES FILTRES
+      // ================================================================
+      const FILTERS = {
+        "": [],
+        "salles": ["dojo", "dojang", "kwoon", "budokan"],
+        "arts_martiaux": ["karate", "judo", "aikido", "kendo", "iaido", "jujitsu", "bjj", "taekwondo", "kung fu", "krav maga", "combat"],
+        "karate": ["karate"],
+        "judo": ["judo", "jujitsu"],
+        "aikido": ["aikido"],
+        "kendo": ["kendo"],
+        "taekwondo": ["taekwondo"],
+        "krav": ["krav maga"],
+        "bjj": ["bjj", "jiu", "jujitsu"]
+      };
+
+      /**
+       * Vérifie si une feature correspond au filtre de type sélectionné
+       */
+      function matchesTextFilter(feature, filterKey) {
+        if (filterKey === "") return true;
+        const text = getApsName(feature);
+        const terms = FILTERS[filterKey] || [];
+        return terms.some(t => text.includes(String(t).toLowerCase()));
+      }
+
+      // ================================================================
+      // FONCTION DE RENDU (AFFICHAGE DES MARKERS)
+      // ================================================================
+      function render() {
+        layer.clearLayers();
+        let count = 0;
+
+        for (const feature of features) {
+          if (!feature?.geometry || feature.geometry.type !== "Point") continue;
+
+          // Application des filtres
+          if (!matchesTextFilter(feature, currentFilterKey)) continue;
+          if (handiOnly && !isHandiAccessible(feature)) continue;
+
+          const coords = feature.geometry.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) continue;
+
+          count++;
+          const props = feature.properties || {};
+
+          // Extraction des données d'affichage
+          const instNom = props.inst_nom ?? "Équipement Sportif";
+          const ville = props.new_name || props.com_nom || props.inst_com_nom || "";
+
+          // Création du marker
+          const latlng = [coords[1], coords[0]];
+          const marker = L.marker(latlng);
+
+          // Tooltip (survol) : affiche le nom en bas
+          marker.bindTooltip(`<b>${instNom}</b>`, {
+            permanent: false,
+            direction: "bottom",
+            className: 'dark-tooltip',
+            offset: [0, 5],
+            opacity: 1
+          });
+
+          // Popup (clic) : affiche nom + ville
+          marker.bindPopup(`
+            <div style="font-family: sans-serif; text-align: center; min-width: 160px;">
+              <h3 style="margin: 0 0 6px 0; color: #1e3a8a; font-size: 14px;">
+                ${instNom}
+              </h3>
+              <div style="color: #555; font-size: 12px; font-weight: 600;">
+                📍 ${ville}
+              </div>
+            </div>
+          `);
+
+          // Ferme le tooltip à l'ouverture de la popup
+          marker.on('popupopen', function () {
+            this.closeTooltip();
+          });
+
+          marker.addTo(layer);
+        }
+
+        // Mise à jour du compteur
+        const compteurEl = document.getElementById("compteur");
+        if (compteurEl) {
+          compteurEl.innerHTML = `<span class="count-number">${count}</span> lieux trouvés`;
+        }
+      }
+
+      async function centerMapOnCityIDF(map, cityName, zoom = 12) {
+  const params = new URLSearchParams({
+    nom: cityName,                 // recherche par nom :contentReference[oaicite:2]{index=2}
+    boost: "population",           // priorise les communes plus peuplées :contentReference[oaicite:3]{index=3}
+    limit: "20",
+    fields: "nom,centre,codeRegion" // centre + codeRegion :contentReference[oaicite:4]{index=4}
+  });
+
+  const url = `https://geo.api.gouv.fr/communes?${params.toString()}`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`API geo.api.gouv.fr: ${res.status}`);
+
+  const communes = await res.json();
+  console.log(communes);
+
+  // Île-de-France = codeRegion "11" (COG/INSEE) :contentReference[oaicite:5]{index=5}
+  const match = communes.find(c => c.codeRegion === "11" && c.centre?.coordinates);
+  if (!match) return false;
+
+  // GeoJSON: [lon, lat]
+  const [lon, lat] = match.centre.coordinates;
+  map.setView([lat, lon], zoom);
+  return communes[0];
+}
+      // compter le nombre des lieux par ville 
+      function countLocationsByCity(cityName) {
+        return features.filter(feature => {
+          const props = feature.properties || {};
+          const ville = props.new_name || props.com_nom || props.inst_com_nom || "";
+          return ville.toLowerCase() === cityName.toLowerCase();
+        }).length;
+      }
+
+
+      // ================================================================
+      // GESTION DES ÉVÉNEMENTS UI
+      // ================================================================
+      const filterButtons = document.querySelectorAll('#filters-list button[data-filter]');
+      const handiBtn = document.getElementById("handiToggle");
+      const resetBtn = document.querySelector(".reset-btn");
+
+      /**
+       * Active visuellement un bouton de filtre
+       */
+      function setActiveBtn(targetBtn) {
+        filterButtons.forEach(b => b.classList.remove('active'));
+        if (targetBtn) targetBtn.classList.add('active');
+      }
+
+      // Événements des boutons de filtre
+      filterButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentFilterKey = btn.dataset.filter;
+          setActiveBtn(btn);
+          render();
+        });
+      });
+
+      // Événement du toggle handiaccès
+      if (handiBtn) {
+        handiBtn.addEventListener("click", () => {
+          handiOnly = !handiOnly;
+          handiBtn.classList.toggle("active", handiOnly);
+          render();
+        });
+      }
+
+      // Événement du bouton reset
+      if (resetBtn) {
+        resetBtn.addEventListener("click", () => {
+          currentFilterKey = "";
+          handiOnly = false;
+          handiBtn.classList.remove("active");
+          setActiveBtn(document.querySelector('#filters-list button[data-filter=""]'));
+          render();
+        });
+      }
+
+      // Événements de la barre de recherche
+      const searchInput = document.getElementById("searchInput");
+      searchInput.addEventListener("change", async (e) => {
+        ville = e.target.value.trim().toLowerCase();
+        if (ville.length > 2) {
+          const centered = await centerMapOnCityIDF(map, ville, 15);
+          let locationCount = countLocationsByCity(centered.nom);
+          let compter = document.querySelector("#compteur .count-number");
+          if (compter) {
+            compter.textContent = locationCount;
+          }
+          if (!centered) {
+            console.warn(`Ville "${ville}" non trouvée en Île-de-France.`);
+          }
+        }
+      });
+
+      // ================================================================
+      // RENDU INITIAL
+      // ================================================================
+      const btnAll = document.querySelector('#filters-list button[data-filter=""]');
+      setActiveBtn(btnAll);
+      render();
+    };
+  </script>
+>>>>>>> Stashed changes
 </body>
 </html>
 

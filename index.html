@@ -3,52 +3,51 @@
 
 <head>
   <meta charset="UTF-8" />
-  <title>DojoFinder - Carte des Clubs</title>
+  <title>DojoFinder - L'outil d'aide au choix</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="index.css">
-
-  <style>
-
-  </style>
 </head>
 
 <body>
   <div class="app-container">
 
-    <!-- ================================================================
-         SIDEBAR - FILTRES ET CONTROLES
-         ================================================================ -->
     <aside class="sidebar">
       <div class="sidebar-header">
         <h1>DojoFinder</h1>
       </div>
 
       <div class="sidebar-content">
-        <!-- Filtres par type de pratique -->
+        
         <div class="filter-section">
-          <h3>Type de pratique</h3>
-          <div id="filters-list" class="button-group">
-            <button type="button" data-filter="">Tous</button>
-            <button type="button" data-filter="salles">Salles (Dojo/Budokan...)</button>
-            <button type="button" data-filter="arts_martiaux">Arts martiaux (tous)</button>
-            <button type="button" data-filter="karate">Karate</button>
-            <button type="button" data-filter="judo">Judo</button>
-            <button type="button" data-filter="aikido">Aikido</button>
-            <button type="button" data-filter="kendo">Kendo</button>
-            <button type="button" data-filter="taekwondo">Taekwondo</button>
-            <button type="button" data-filter="bjj">Jiu-jitsu / BJJ</button>
-            <button type="button" data-filter="krav">Krav Maga</button>
+          <h3>Niveau Sportif</h3>
+          <div id="perf-filters" class="button-group">
+            <button type="button" class="active" data-perf="all">Tous</button>
+            <button type="button" data-perf="Compétition"> Compétition</button>
+            <button type="button" data-perf="Loisir"> Loisir</button>
           </div>
         </div>
 
-        <!-- Filtre accessibilité -->
-        <div class="filter-section special-box">
-          <h3>Accessibilité</h3>
-          <button type="button" id="handiToggle" class="toggle-btn">
-            ♿ Handiaccès uniquement
-          </button>
+        <div class="filter-section">
+          <h3>Confort & Équipements</h3>
+          <div class="toggle-group">
+            <button type="button" id="toggleDouche" class="toggle-btn"> Douches</button>
+            <button type="button" id="toggleHandi" class="toggle-btn">♿ Handiaccès</button>
+            <button type="button" id="toggleTribune" class="toggle-btn"> Tribunes</button>
+          </div>
+        </div>
+
+        <div class="filter-section">
+          <h3>Activités</h3>
+          <div id="filters-list" class="button-group">
+            <button type="button" class="active" data-filter="">Tous</button>
+            <button type="button" data-filter="judo">Judo</button>
+            <button type="button" data-filter="karate">Karate</button>
+            <button type="button" data-filter="taekwondo">Taekwondo</button>
+            <button type="button" data-filter="aikido">Aikido</button>
+            <button type="button" data-filter="bjj">BJJ / Jiu-jitsu</button>
+          </div>
         </div>
       </div>
 
@@ -57,9 +56,6 @@
       </div>
     </aside>
 
-    <!-- ================================================================
-         ZONE CARTE
-         ================================================================ -->
     <main class="map-wrapper">
       <div id="compteur" class="floating-counter">
         <span class="count-number">-</span> lieux trouvés
@@ -69,216 +65,162 @@
 
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
     "use strict";
 
     window.onload = async () => {
-
-      // ================================================================
-      // INITIALISATION DE LA CARTE
-      // ================================================================
-      const map = L.map('map', { center: [48.856667, 2.352222], zoom: 10 });
-
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      // INITIALISATION CARTE
+      const map = L.map('map', { center: [48.8566, 2.3522], zoom: 11 });
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+        attribution: '&copy; OpenStreetMap'
       }).addTo(map);
 
       const layer = L.layerGroup().addTo(map);
 
-      // ================================================================
-      // CHARGEMENT DES DONNÉES GEOJSON
-      // ================================================================
-      let features = [];
-      try {
-        const response = await fetch("dojos.geojson");
-        if (!response.ok) throw new Error("Fichier introuvable");
-        const data = await response.json();
-        features = Array.isArray(data.features) ? data.features : [];
-        console.log(`✅ ${features.length} lieux chargés.`);
-      } catch (e) {
-        console.error("Erreur chargement:", e);
-        alert("Impossible de charger 'dojos.geojson'. Vérifiez que le fichier est bien présent.");
-        return;
-      }
-
-      // ================================================================
       // ÉTAT DES FILTRES
-      // ================================================================
-      let currentFilterKey = "";
-      let handiOnly = false;
+      let features = [];
+      let filterType = "";      // Activité
+      let filterPerf = "all";   // Niveau Sportif
+      let filterDouche = false; // Confort
+      let filterHandi = false;  // Confort
+      let filterTribune = false;// Confort
 
-      // ================================================================
-      // FONCTIONS UTILITAIRES
-      // ================================================================
-
-      /**
-       * Extrait et normalise le nom d'activité (aps_name)
-       * Gère à la fois les tableaux et les chaînes
-       */
-      function getApsName(feature) {
-        const p = feature?.properties || {};
-        const val = p.aps_name;
-        if (Array.isArray(val)) return val.join(" ").toLowerCase();
-        return String(val ?? "").toLowerCase();
+      // CHARGEMENT DATA
+      try {
+        const response = await fetch("dojo_finder_final_map.geojson");
+        const data = await response.json();
+        features = data.features;
+        render();
+      } catch (e) {
+        console.error("Erreur chargement GeoJSON:", e);
       }
+function render() {
+  layer.clearLayers();
+  let count = 0;
 
-      /**
-       * Vérifie si l'équipement est accessible aux personnes handicapées
-       */
-      function isHandiAccessible(feature) {
-        const p = feature?.properties || {};
-        const v = p.inst_acc_handi_bool;
-        if (v === true) return true;
-        if (v === false || v == null) return false;
-        const s = String(v).trim().toLowerCase();
-        return (s === "true" || s === "1" || s === "oui" || s === "yes");
-      }
+  features.forEach(f => {
+    const p = f.properties;
 
-      // ================================================================
-      // CONFIGURATION DES FILTRES
-      // ================================================================
-      const FILTERS = {
-        "": [],
-        "salles": ["dojo", "dojang", "kwoon", "budokan"],
-        "arts_martiaux": ["karate", "judo", "aikido", "kendo", "iaido", "jujitsu", "bjj", "taekwondo", "kung fu", "krav maga", "combat"],
-        "karate": ["karate"],
-        "judo": ["judo", "jujitsu"],
-        "aikido": ["aikido"],
-        "kendo": ["kendo"],
-        "taekwondo": ["taekwondo"],
-        "krav": ["krav maga"],
-        "bjj": ["bjj", "jiu", "jujitsu"]
-      };
+    // --- 1. FILTRE PERFORMANCE ---
+    // filterPerf peut être "all", "Compétition" ou "Loisir"
+    if (filterPerf !== "all" && p.statut_club !== filterPerf) return;
 
-      /**
-       * Vérifie si une feature correspond au filtre de type sélectionné
-       */
-      function matchesTextFilter(feature, filterKey) {
-        if (filterKey === "") return true;
-        const text = getApsName(feature);
-        const terms = FILTERS[filterKey] || [];
-        return terms.some(t => text.includes(String(t).toLowerCase()));
-      }
+    // --- 2. FILTRE CONFORT ---
+    // On vérifie les booléens et les chaines "true" issues du GeoJSON
+    const hasDouche = p.has_douche || p.equip_douche === "true" || p.equip_douche === true;
+    const isHandi = p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true;
+    const nbTribunes = parseInt(p.nb_tribunes || p.equip_trib_nb || 0);
+    const nbVestiaires = parseInt(p.nb_vestiaires || p.equip_vest_sport || 0);
 
-      // ================================================================
-      // FONCTION DE RENDU (AFFICHAGE DES MARKERS)
-      // ================================================================
-      function render() {
-        layer.clearLayers();
-        let count = 0;
+    if (filterDouche && !hasDouche) return;
+    if (filterHandi && !isHandi) return;
+    if (filterTribune && nbTribunes <= 0) return;
 
-        for (const feature of features) {
-          if (!feature?.geometry || feature.geometry.type !== "Point") continue;
+    // --- 3. FILTRE ACTIVITÉ ---
+    const aps = String(p.aps_name || "").toLowerCase();
+    if (filterType !== "" && !aps.includes(filterType)) return;
 
-          // Application des filtres
-          if (!matchesTextFilter(feature, currentFilterKey)) continue;
-          if (handiOnly && !isHandiAccessible(feature)) continue;
+    count++;
+    
+    // --- STYLE DU MARQUEUR ---
+    // Or pour compétition, Bleu pour loisir
+    const markerColor = p.statut_club === 'Compétition' ? '#fbbf24' : '#3b82f6';
+    const marker = L.circleMarker([f.geometry.coordinates[1], f.geometry.coordinates[0]], {
+      radius: 9,
+      fillColor: markerColor,
+      color: "#ffffff",
+      weight: 2,
+      fillOpacity: 0.9
+    });
 
-          const coords = feature.geometry.coordinates;
-          if (!Array.isArray(coords) || coords.length < 2) continue;
+    // --- POPUP STRUCTURÉE (Cahier des charges) ---
+    const popupHtml = `
+      <div class="custom-popup" style="min-width:220px; font-family: sans-serif;">
+        <div style="margin-bottom:8px;">
+          <strong style="font-size:14px; color:#1e3a8a; text-transform:uppercase;">
+            ${p.nom_officiel || p.inst_nom}
+          </strong><br>
+          <small style="color:#64748b;"><i class="fa-solid fa-location-dot"></i> ${p.new_name || p.ville || ""}</small>
+        </div>
 
-          count++;
-          const props = feature.properties || {};
+        <div style="background:#f1f5f9; padding:8px; border-radius:6px; margin-bottom:10px; border-left:4px solid ${markerColor};">
+          <b style="font-size:11px; color:#475569; text-transform:uppercase;">Niveau Sportif</b><br>
+          <span style="font-weight:bold;">${p.statut_club === 'Compétition' ? ' Compétition' : ' Loisir'}</span>
+          ${p.score_global > 0 ? `<br><b style="color:#b45309;">${Math.round(p.score_global)} pts</b> <small>(Classement National)</small>` : ''}
+        </div>
 
-          // Extraction des données d'affichage
-          const instNom = props.inst_nom ?? "Équipement Sportif";
-          const ville = props.new_name || props.com_nom || props.inst_com_nom || "";
+        <div style="margin-bottom:10px;">
+          <b style="font-size:11px; color:#475569; text-transform:uppercase;">Infrastructures</b>
+          <ul style="list-style:none; padding:0; margin:5px 0; font-size:12px;">
+            <li>${hasDouche ? ' Douches' : ' Pas de douches'}</li>
+            <li> ${nbVestiaires} vestiaires</li>
+            <li>${isHandi ? ' Accès PMR' : ' Non accessible'}</li>
+            ${nbTribunes > 0 ? `<li> ${nbTribunes} places tribunes</li>` : ''}
+          </ul>
+        </div>
 
-          // Création du marker
-          const latlng = [coords[1], coords[0]];
-          const marker = L.marker(latlng);
+        ${p.equip_url ? `
+          <div style="border-top:1px solid #eee; padding-top:8px; text-align:center;">
+            <a href="${p.equip_url}" target="_blank" style="color:#2563eb; text-decoration:none; font-size:12px; font-weight:bold;">
+              <i class="fa-solid fa-circle-info"></i> Fiche équipement
+            </a>
+          </div>
+        ` : ''}
+      </div>
+    `;
 
-          // Tooltip (survol) : affiche le nom en bas
-          marker.bindTooltip(`<b>${instNom}</b>`, {
-            permanent: false,
-            direction: "bottom",
-            className: 'dark-tooltip',
-            offset: [0, 5],
-            opacity: 1
-          });
+    marker.bindPopup(popupHtml).addTo(layer);
+  });
 
-          // Popup (clic) : affiche nom + ville
-          marker.bindPopup(`
-            <div style="font-family: sans-serif; text-align: center; min-width: 160px;">
-              <h3 style="margin: 0 0 6px 0; color: #1e3a8a; font-size: 14px;">
-                ${instNom}
-              </h3>
-              <div style="color: #555; font-size: 12px; font-weight: 600;">
-                📍 ${ville}
-              </div>
-            </div>
-          `);
+  // Mise à jour du compteur
+  const compteurEl = document.getElementById("compteur");
+  if (compteurEl) {
+    compteurEl.innerHTML = `<span class="count-number">${count}</span> lieux trouvés`;
+  }
+}
 
-          // Ferme le tooltip à l'ouverture de la popup
-          marker.on('popupopen', function () {
-            this.closeTooltip();
-          });
-
-          marker.addTo(layer);
-        }
-
-        // Mise à jour du compteur
-        const compteurEl = document.getElementById("compteur");
-        if (compteurEl) {
-          compteurEl.innerHTML = `<span class="count-number">${count}</span> lieux trouvés`;
-        }
-      }
-
-      // ================================================================
-      // GESTION DES ÉVÉNEMENTS UI
-      // ================================================================
-      const filterButtons = document.querySelectorAll('#filters-list button[data-filter]');
-      const handiBtn = document.getElementById("handiToggle");
-      const resetBtn = document.querySelector(".reset-btn");
-
-      /**
-       * Active visuellement un bouton de filtre
-       */
-      function setActiveBtn(targetBtn) {
-        filterButtons.forEach(b => b.classList.remove('active'));
-        if (targetBtn) targetBtn.classList.add('active');
-      }
-
-      // Événements des boutons de filtre
-      filterButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-          currentFilterKey = btn.dataset.filter;
-          setActiveBtn(btn);
+      // GESTION UI
+      document.querySelectorAll('#perf-filters button').forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll('#perf-filters button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          filterPerf = btn.dataset.perf;
           render();
-        });
+        };
       });
 
-      // Événement du toggle handiaccès
-      if (handiBtn) {
-        handiBtn.addEventListener("click", () => {
-          handiOnly = !handiOnly;
-          handiBtn.classList.toggle("active", handiOnly);
+      document.querySelectorAll('#filters-list button').forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll('#filters-list button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          filterType = btn.dataset.filter;
           render();
-        });
-      }
+        };
+      });
 
-      // Événement du bouton reset
-      if (resetBtn) {
-        resetBtn.addEventListener("click", () => {
-          currentFilterKey = "";
-          handiOnly = false;
-          handiBtn.classList.remove("active");
-          setActiveBtn(document.querySelector('#filters-list button[data-filter=""]'));
-          render();
-        });
-      }
+      // Toggles Confort
+      document.getElementById('toggleDouche').onclick = function() {
+        filterDouche = !filterDouche;
+        this.classList.toggle('active');
+        render();
+      };
+      document.getElementById('toggleHandi').onclick = function() {
+        filterHandi = !filterHandi;
+        this.classList.toggle('active');
+        render();
+      };
+      document.getElementById('toggleTribune').onclick = function() {
+        filterTribune = !filterTribune;
+        this.classList.toggle('active');
+        render();
+      };
 
-      // ================================================================
-      // RENDU INITIAL
-      // ================================================================
-      const btnAll = document.querySelector('#filters-list button[data-filter=""]');
-      setActiveBtn(btnAll);
-      render();
+      document.querySelector(".reset-btn").onclick = () => {
+        location.reload();
+      };
     };
   </script>
 </body>
-
 </html>

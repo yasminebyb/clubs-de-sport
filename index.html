@@ -5,20 +5,27 @@
   <title>DojoFinder - L'outil d'aide au choix</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <!-- Leaflet (carte) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Font Awesome (icônes) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Ton CSS -->
   <link rel="stylesheet" href="index.css">
 </head>
 
 <body>
   <div class="app-container">
 
+    <!-- =======================
+         SIDEBAR (FILTRES)
+         ======================= -->
     <aside class="sidebar">
       <div class="sidebar-header">
         <h1>DojoFinder</h1>
       </div>
 
       <div class="sidebar-content">
+        <!-- ===== Recherche + Perf ===== -->
         <div class="filter-section">
           <h3>Recherche</h3>
           <div class="search-box">
@@ -47,6 +54,7 @@
           </div>
         </div>
 
+        <!-- ===== Confort + Géoloc ===== -->
         <div class="filter-section">
           <h3>Confort & Équipements</h3>
           <div class="toggle-group">
@@ -54,11 +62,12 @@
             <button type="button" id="toggleHandi" class="toggle-btn">♿ Handiaccès</button>
             <button type="button" id="toggleTribune" class="toggle-btn"> Tribunes</button>
 
-            <!-- ✅ Position machine -->
+            <!-- ✅ Bouton unique : récupère la position machine et affiche le cercle 2km -->
             <button type="button" id="btnLocateMe" class="toggle-btn">📡 Ma position</button>
           </div>
         </div>
 
+        <!-- ===== Activités ===== -->
         <div class="filter-section">
           <h3>Activités</h3>
           <div id="filters-list" class="button-group">
@@ -77,6 +86,9 @@
       </div>
     </aside>
 
+    <!-- =======================
+         CARTE
+         ======================= -->
     <main class="map-wrapper">
       <div id="compteur" class="floating-counter">
         <span class="count-number">-</span> lieux trouvés
@@ -86,38 +98,55 @@
 
   </div>
 
+  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
     "use strict";
 
     window.onload = async () => {
-      const IDF_REGION_CODE = "11";
-      const DEFAULT_VIEW = { lat: 48.8566, lng: 2.3522, zoom: 11 };
+      // =======================
+      // CONSTANTES / ETAT GLOBAL
+      // =======================
+      const IDF_REGION_CODE = "11"; // Code région Île-de-France pour filtrer l'API geo.api.gouv.fr
+      const DEFAULT_VIEW = { lat: 48.8566, lng: 2.3522, zoom: 11 }; // Vue par défaut (Paris)
 
+      // Ville actuellement sélectionnée via la recherche (null si aucune)
       let currentCity = null;
 
-      // INITIALISATION CARTE
-      const map = L.map('map', { center: [DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], zoom: DEFAULT_VIEW.zoom });
+      // =======================
+      // INITIALISATION CARTE LEAFLET
+      // =======================
+      const map = L.map('map', {
+        center: [DEFAULT_VIEW.lat, DEFAULT_VIEW.lng],
+        zoom: DEFAULT_VIEW.zoom
+      });
+
+      // Fond de carte (Carto)
       L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
         attribution: '&copy; OpenStreetMap'
       }).addTo(map);
 
+      // LayerGroup pour (re)dessiner facilement tous les marqueurs à chaque render()
       const layer = L.layerGroup().addTo(map);
 
-      // ÉTAT DES FILTRES
-      let features = [];
-      let filterType = "";      // Activité
-      let filterPerf = "all";   // Niveau Sportif
-      let filterDouche = false; // Confort
-      let filterHandi = false;  // Confort
-      let filterTribune = false;// Confort
+      // =======================
+      // ETAT DES FILTRES
+      // =======================
+      let features = [];         // Données GeoJSON chargées (features)
+      let filterType = "";       // Activité (judo/karate/...)
+      let filterPerf = "all";    // "all" | "Compétition" | "Loisir"
+      let filterDouche = false;  // Bool
+      let filterHandi = false;   // Bool
+      let filterTribune = false; // Bool
 
-      // =========================
-      // RAYON 2KM (AUTO)
-      // =========================
+      // =======================
+      // CERCLE 2 KM (AFFICHÉ AUTOMATIQUEMENT)
+      // - S'affiche autour de la ville choisie OU de la position machine
+      // =======================
       let radiusCircle = null;
 
+      // Crée le cercle s'il n'existe pas, sinon le déplace / met à jour
       function showOrMoveRadiusCircle(lat, lng, radiusMeters = 2000) {
         const style = {
           radius: radiusMeters,
@@ -125,84 +154,112 @@
           weight: 2,
           fill: false,        // ✅ transparent (pas de remplissage)
           opacity: 0.9,
-          interactive: false
+          interactive: false  // évite que le cercle "capte" les clics
         };
 
         if (!radiusCircle) {
+          // 1ère création
           radiusCircle = L.circle([lat, lng], style).addTo(map);
         } else {
+          // Mise à jour
           radiusCircle.setLatLng([lat, lng]);
           radiusCircle.setRadius(radiusMeters);
           radiusCircle.setStyle(style);
         }
       }
 
-      // Priorité: ville -> position machine -> centre carte
+      // Met à jour la position du cercle suivant une priorité :
+      // 1) ville sélectionnée (search)
+      // 2) position machine (géoloc)
+      // 3) centre de la carte
       function updateRadiusCirclePosition() {
+        // 1) Cercle sur la ville
         if (currentCity?.centre?.coordinates) {
-          const [lon, lat] = currentCity.centre.coordinates;
+          const [lon, lat] = currentCity.centre.coordinates; // GeoJSON: [lon, lat]
           showOrMoveRadiusCircle(lat, lon, 2000);
           return;
         }
+
+        // 2) Cercle sur la machine
         if (userLatLng) {
           showOrMoveRadiusCircle(userLatLng.lat, userLatLng.lng, 2000);
           return;
         }
+
+        // 3) Cercle sur le centre de la carte
         const c = map.getCenter();
         showOrMoveRadiusCircle(c.lat, c.lng, 2000);
       }
 
-      // =========================
-      // GEOLOC MACHINE
-      // =========================
-      let userLatLng = null;
-      let userMarker = null;
+      // =======================
+      // GEOLOC MACHINE (NAVIGATEUR)
+      // =======================
+      let userLatLng = null; // Stocke la position machine (L.latLng)
+      let userMarker = null; // Marqueur "vous êtes ici"
 
       function locateUser() {
+        // Vérifie que le navigateur supporte l'API
         if (!("geolocation" in navigator)) {
           alert("La géolocalisation n'est pas supportée par ce navigateur.");
           return;
         }
 
+        // Récupère une position ponctuelle (pas du suivi continu)
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             const lat = pos.coords.latitude;
             const lng = pos.coords.longitude;
-            const accuracy = pos.coords.accuracy;
+            const accuracy = pos.coords.accuracy; // précision en mètres (approx)
 
+            // Sauvegarde dans une variable globale
             userLatLng = L.latLng(lat, lng);
+
+            // Debug console
             console.log("Coordonnées machine:", lat, lng, "±", Math.round(accuracy), "m");
 
+            // Centre la carte sur l'utilisateur
             map.setView([lat, lng], 15);
 
+            // Crée ou déplace le marqueur utilisateur
             if (!userMarker) {
               userMarker = L.marker([lat, lng]).addTo(map).bindPopup("Vous êtes ici");
             } else {
               userMarker.setLatLng([lat, lng]);
             }
 
-            // ✅ Affiche automatiquement le rayon 2km autour de la machine
+            // ✅ Affiche / met à jour le cercle 2km autour de la machine
             updateRadiusCirclePosition();
           },
           (err) => {
+            // Gestion d'erreur: permission refusée, timeout, etc.
             console.error("Erreur géoloc:", err.code, err.message);
             alert("Impossible de récupérer la position (permission refusée ou HTTPS requis).");
           },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+          {
+            enableHighAccuracy: true, // tente d'être plus précis (peut consommer plus)
+            timeout: 10000,           // délai max
+            maximumAge: 0             // n'utilise pas un cache trop ancien
+          }
         );
       }
 
-      // CHARGEMENT DATA
+      // =======================
+      // CHARGEMENT DES DONNÉES GEOJSON
+      // =======================
       try {
         const response = await fetch("dojo_finder_final_map.geojson");
         const data = await response.json();
         features = data.features;
-        render();
+        render(); // 1er affichage
       } catch (e) {
         console.error("Erreur chargement GeoJSON:", e);
       }
 
+      // =======================
+      // RECENTRAGE SUR UNE VILLE IDF (geo.api.gouv.fr)
+      // =======================
       async function centerMapOnCityIDF(cityName, zoom = 13) {
+        // Paramètres API pour chercher une commune
         const params = new URLSearchParams({
           nom: cityName,
           boost: "population",
@@ -211,28 +268,45 @@
         });
 
         const url = `https://geo.api.gouv.fr/communes?${params.toString()}`;
+
         const res = await fetch(url, { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error(`geo.api.gouv.fr HTTP ${res.status}`);
 
         const communes = await res.json();
+
+        // On prend la 1ère commune IDF qui a un centre (coordonnées)
         const match = communes.find((c) => c.codeRegion === IDF_REGION_CODE && c.centre?.coordinates);
         if (!match) return null;
 
-        const [lon, lat] = match.centre.coordinates; // GeoJSON: [lon, lat]
+        // GeoJSON: [lon, lat]
+        const [lon, lat] = match.centre.coordinates;
+
+        // Centre la map
         map.setView([lat, lon], zoom);
+
+        // ✅ Affiche / met à jour le cercle 2km autour de la ville
+        updateRadiusCirclePosition();
 
         return match;
       }
 
+      // =======================
+      // RENDER: applique les filtres et affiche les marqueurs
+      // =======================
       function render() {
+        // Vide les anciens marqueurs
         layer.clearLayers();
+
         let count = 0;
 
+        // Pour chaque feature (dojo)
         features.forEach(f => {
           const p = f.properties;
 
+          // --- 1) FILTRE PERFORMANCE ---
           if (filterPerf !== "all" && p.statut_club !== filterPerf) return;
 
+          // --- 2) FILTRES CONFORT ---
           const hasDouche = p.has_douche || p.equip_douche === "true" || p.equip_douche === true;
           const isHandi = p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true;
           const nbTribunes = parseInt(p.nb_tribunes || p.equip_trib_nb || 0);
@@ -242,13 +316,22 @@
           if (filterHandi && !isHandi) return;
           if (filterTribune && nbTribunes <= 0) return;
 
+          // --- 3) FILTRE ACTIVITÉ ---
           const aps = String(p.aps_name || "").toLowerCase();
           if (filterType !== "" && !aps.includes(filterType)) return;
 
+          // Si on arrive ici: la feature passe tous les filtres
           count++;
 
+          // Couleur du marqueur selon compétition / loisir
           const markerColor = p.statut_club === 'Compétition' ? '#fbbf24' : '#3b82f6';
-          const marker = L.circleMarker([f.geometry.coordinates[1], f.geometry.coordinates[0]], {
+
+          // Leaflet: geometry GeoJSON = [lon, lat]
+          const lat = f.geometry.coordinates[1];
+          const lng = f.geometry.coordinates[0];
+
+          // Marqueur cercle
+          const marker = L.circleMarker([lat, lng], {
             radius: 9,
             fillColor: markerColor,
             color: "#ffffff",
@@ -256,12 +339,14 @@
             fillOpacity: 0.9
           });
 
+          // Helper: format distance (gère virgule -> point)
           const fmtDist = (v) => {
             if (v === null || v === undefined || v === "") return "—";
             const n = typeof v === "string" ? Number(v.replace(",", ".")) : Number(v);
             return Number.isFinite(n) ? `${Math.round(n)} m` : "—";
           };
 
+          // Popup HTML (tu peux conserver ton style initial, ici on laisse tel quel)
           const popupHtml = `
             <div class="custom-popup" style="
               min-width:240px;
@@ -286,60 +371,32 @@
                 </div>
               </div>
 
-              <div style="background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-                padding:10px;border-radius:10px;margin:0 10px 10px 10px;border:1px solid #e2e8f0;position:relative;overflow:hidden;">
-                <div style="position:absolute; inset:0;background: radial-gradient(circle at 20% 20%, rgba(59,130,246,.12), transparent 60%);pointer-events:none;"></div>
-                <div style="position:relative;">
-                  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                    <div>
-                      <div style="font-size:11px;color:#475569;text-transform:uppercase;font-weight:700;">Niveau Sportif</div>
-                      <div style="font-weight:800;margin-top:2px;">
-                        ${p.statut_club === 'Compétition' ? 'Compétition' : 'Loisir'}
-                      </div>
-                    </div>
-
-                    ${p.score_global > 0 ? `
-                      <div style="text-align:right;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:6px 8px;box-shadow:0 1px 2px rgba(15,23,42,.06);">
-                        <div style="font-weight:900;color:#b45309;font-size:13px;">
-                          ${Math.round(Number(p.score_global))} pts
-                        </div>
-                        <div style="font-size:10px;color:#64748b;">Classement National</div>
-                      </div>
-                    ` : `
-                      <div style="font-size:11px;color:#94a3b8;border:1px dashed #cbd5e1;border-radius:10px;padding:6px 8px;white-space:nowrap;">
-                        Score N/A
-                      </div>
-                    `}
-                  </div>
-                </div>
-              </div>
-
               <div style="margin:0 10px 10px 10px;">
                 <div style="font-size:11px;color:#475569;text-transform:uppercase;font-weight:800;margin-bottom:6px;">Infrastructures</div>
                 <div style="display:flex; flex-wrap:wrap; gap:6px;">
                   <span style="font-size:12px;padding:5px 8px;border-radius:999px;
-                    background:${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '#ecfdf5' : '#fef2f2'};
-                    border:1px solid ${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '#a7f3d0' : '#fecaca'};
-                    color:${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '#065f46' : '#991b1b'};
+                    background:${hasDouche ? '#ecfdf5' : '#fef2f2'};
+                    border:1px solid ${hasDouche ? '#a7f3d0' : '#fecaca'};
+                    color:${hasDouche ? '#065f46' : '#991b1b'};
                     font-weight:700;">
-                    ${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '🚿 Douches' : '🚫 Douches'}
+                    ${hasDouche ? '🚿 Douches' : '🚫 Douches'}
                   </span>
 
                   <span style="font-size:12px;padding:5px 8px;border-radius:999px;background:#f8fafc;border:1px solid #e2e8f0;color:#0f172a;font-weight:700;">
-                    👕 ${parseInt(p.nb_vestiaires || p.equip_vest_sport || 0)} vestiaires
+                    👕 ${nbVestiaires} vestiaires
                   </span>
 
                   <span style="font-size:12px;padding:5px 8px;border-radius:999px;
-                    background:${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '#eff6ff' : '#f8fafc'};
-                    border:1px solid ${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '#bfdbfe' : '#e2e8f0'};
-                    color:${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '#1d4ed8' : '#475569'};
+                    background:${isHandi ? '#eff6ff' : '#f8fafc'};
+                    border:1px solid ${isHandi ? '#bfdbfe' : '#e2e8f0'};
+                    color:${isHandi ? '#1d4ed8' : '#475569'};
                     font-weight:700;">
-                    ${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '♿ Accès PMR' : 'PMR: non'}
+                    ${isHandi ? '♿ Accès PMR' : 'PMR: non'}
                   </span>
 
-                  ${parseInt(p.nb_tribunes || p.equip_trib_nb || 0) > 0 ? `
+                  ${nbTribunes > 0 ? `
                     <span style="font-size:12px;padding:5px 8px;border-radius:999px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-weight:700;">
-                      🪑 ${parseInt(p.nb_tribunes || p.equip_trib_nb || 0)} tribunes
+                      🪑 ${nbTribunes} tribunes
                     </span>
                   ` : ''}
                 </div>
@@ -347,14 +404,13 @@
 
               <div style="margin:0 10px 12px 10px;">
                 <div style="font-size:11px;color:#475569;text-transform:uppercase;font-weight:800;margin-bottom:6px;">Transports proches</div>
-
                 <div style="display:grid; gap:8px;">
                   ${[
-                    { label:"Bus",  nomField:"arret_bus_nom",   distField:"distance_bus_m",   idField:"arret_bus_id",   icon:"🚌", tint:"#f1f5f9", border:"#e2e8f0" },
-                    { label:"Métro",nomField:"arret_metro_nom", distField:"distance_metro_m", idField:"arret_metro_id", icon:"🚇", tint:"#eff6ff", border:"#bfdbfe" },
-                    { label:"Tram", nomField:"arret_tram_nom",  distField:"distance_tram_m",  idField:"arret_tram_id",  icon:"🚊", tint:"#ecfdf5", border:"#a7f3d0" },
+                    { label:"Bus",  nomField:"arret_bus_nom",   distField:"distance_bus_m",   idField:"arret_bus_id",   icon:"🚌" },
+                    { label:"Métro",nomField:"arret_metro_nom", distField:"distance_metro_m", idField:"arret_metro_id", icon:"🚇" },
+                    { label:"Tram", nomField:"arret_tram_nom",  distField:"distance_tram_m",  idField:"arret_tram_id",  icon:"🚊" },
                   ].map(t => `
-                    <div style="background:${t.tint};border:1px solid ${t.border};border-radius:10px;padding:8px 10px;box-shadow:0 1px 2px rgba(15,23,42,.05);">
+                    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:8px 10px;box-shadow:0 1px 2px rgba(15,23,42,.05);">
                       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
                         <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                           <div style="font-size:16px;">${t.icon}</div>
@@ -391,35 +447,39 @@
           marker.bindPopup(popupHtml).addTo(layer);
         });
 
+        // Mise à jour du compteur en UI
         const compteurEl = document.getElementById("compteur");
         if (compteurEl) {
           compteurEl.innerHTML = `<span class="count-number">${count}</span> lieux trouvés`;
         }
       }
 
-      // =========================
-      // EVENTS
-      // =========================
+      // =======================
+      // EVENTS UI
+      // =======================
 
-      // Recherche ville
+      // Recherche ville: on centre sur la ville et on rerender
       document.getElementById('searchInput').addEventListener('input', async (e) => {
         const cityName = e.target.value.trim();
         if (!cityName) return;
 
+        // Sauvegarde la ville comme ville active
         currentCity = await centerMapOnCityIDF(cityName);
-        render();
 
-        // le cercle se met à jour dans centerMapOnCityIDF()
+        // Rafraîchit les marqueurs selon filtres
+        render();
       });
 
-      // Clear recherche
+      // Clear recherche: remet tout "comme au début"
       document.getElementById('clearSearch').addEventListener('click', () => {
-        const inp = document.getElementById('searchInput');
-        inp.value = "";
+        document.getElementById('searchInput').value = "";
         currentCity = null;
 
         map.setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom);
         render();
+
+        // Repositionne le cercle (centre carte ou position machine si dispo)
+        updateRadiusCirclePosition();
       });
 
       // Filtres perf
@@ -459,14 +519,16 @@
         render();
       };
 
-      // Bouton "Ma position"
+      // Bouton "Ma position": vide la ville et récupère la géoloc
       document.getElementById('btnLocateMe').onclick = function () {
+        // On retire la référence à une ville pour forcer "position machine"
         currentCity = null;
         document.getElementById('searchInput').value = "";
+
         locateUser();
       };
 
-      // Reset global
+      // Reset global (reload page)
       document.querySelector(".reset-btn").onclick = () => {
         location.reload();
       };

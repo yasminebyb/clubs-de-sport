@@ -136,40 +136,245 @@ function render() {
     });
 
     // --- POPUP STRUCTURÉE (Cahier des charges) ---
-    const popupHtml = `
-      <div class="custom-popup" style="min-width:220px; font-family: sans-serif;">
-        <div style="margin-bottom:8px;">
-          <strong style="font-size:14px; color:#1e3a8a; text-transform:uppercase;">
-            ${p.nom_officiel || p.inst_nom}
-          </strong><br>
-          <small style="color:#64748b;"><i class="fa-solid fa-location-dot"></i> ${p.new_name || p.ville || ""}</small>
-        </div>
+    // Assure-toi que p pointe bien vers les propriétés
 
-        <div style="background:#f1f5f9; padding:8px; border-radius:6px; margin-bottom:10px; border-left:4px solid ${markerColor};">
-          <b style="font-size:11px; color:#475569; text-transform:uppercase;">Niveau Sportif</b><br>
-          <span style="font-weight:bold;">${p.statut_club === 'Compétition' ? ' Compétition' : ' Loisir'}</span>
-          ${p.score_global > 0 ? `<br><b style="color:#b45309;">${Math.round(p.score_global)} pts</b> <small>(Classement National)</small>` : ''}
-        </div>
+// Format distance safe (nombre ou string, virgule ou point)
+const fmtDist = (v) => {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = typeof v === "string" ? Number(v.replace(",", ".")) : Number(v);
+  return Number.isFinite(n) ? `${Math.round(n)} m` : "—";
+};
 
-        <div style="margin-bottom:10px;">
-          <b style="font-size:11px; color:#475569; text-transform:uppercase;">Infrastructures</b>
-          <ul style="list-style:none; padding:0; margin:5px 0; font-size:12px;">
-            <li>${hasDouche ? ' Douches' : ' Pas de douches'}</li>
-            <li> ${nbVestiaires} vestiaires</li>
-            <li>${isHandi ? ' Accès PMR' : ' Non accessible'}</li>
-            ${nbTribunes > 0 ? `<li> ${nbTribunes} places tribunes</li>` : ''}
-          </ul>
-        </div>
+const popupHtml = `
+  <div class="custom-popup" style="
+    min-width:240px;
+    max-width:320px;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    color:#0f172a;
+  ">
+    <!-- Header -->
+    <div style="
+      padding:10px 10px 8px 10px;
+      border-bottom:1px solid #e2e8f0;
+      margin-bottom:10px;
+    ">
+      <div style="display:flex; align-items:flex-start; gap:8px;">
+        <div style="
+          width:10px; height:10px; border-radius:999px;
+          margin-top:5px;
+          background:${markerColor};
+          box-shadow:0 0 0 3px rgba(37,99,235,.08);
+          flex:0 0 auto;
+        "></div>
 
-        ${p.equip_url ? `
-          <div style="border-top:1px solid #eee; padding-top:8px; text-align:center;">
-            <a href="${p.equip_url}" target="_blank" style="color:#2563eb; text-decoration:none; font-size:12px; font-weight:bold;">
-              <i class="fa-solid fa-circle-info"></i> Fiche équipement
-            </a>
+        <div style="flex:1 1 auto;">
+          <div style="
+            font-weight:800;
+            font-size:13px;
+            letter-spacing:.04em;
+            text-transform:uppercase;
+            line-height:1.2;
+            color:#1e3a8a;
+          ">
+            ${p.nom_officiel || p.inst_nom || "—"}
           </div>
+
+          <div style="
+            margin-top:4px;
+            font-size:12px;
+            color:#64748b;
+            display:flex;
+            align-items:center;
+            gap:6px;
+          ">
+            <i class="fa-solid fa-location-dot"></i>
+            <span>${p.new_name || p.ville || ""}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Niveau -->
+    <div style="
+      background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+      padding:10px;
+      border-radius:10px;
+      margin:0 10px 10px 10px;
+      border:1px solid #e2e8f0;
+      position:relative;
+      overflow:hidden;
+    ">
+      <div style="
+        position:absolute; inset:0;
+        background: radial-gradient(circle at 20% 20%, rgba(59,130,246,.12), transparent 60%);
+        pointer-events:none;
+      "></div>
+
+      <div style="position:relative;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div>
+            <div style="font-size:11px; color:#475569; text-transform:uppercase; font-weight:700;">
+              Niveau Sportif
+            </div>
+            <div style="font-weight:800; margin-top:2px;">
+              ${p.statut_club === 'Compétition' ? 'Compétition' : 'Loisir'}
+            </div>
+          </div>
+
+          ${p.score_global > 0 ? `
+            <div style="
+              text-align:right;
+              background:#fff;
+              border:1px solid #e2e8f0;
+              border-radius:10px;
+              padding:6px 8px;
+              box-shadow:0 1px 2px rgba(15,23,42,.06);
+            ">
+              <div style="font-weight:900; color:#b45309; font-size:13px;">
+                ${Math.round(Number(p.score_global))} pts
+              </div>
+              <div style="font-size:10px; color:#64748b;">Classement National</div>
+            </div>
+          ` : `
+            <div style="
+              font-size:11px;
+              color:#94a3b8;
+              border:1px dashed #cbd5e1;
+              border-radius:10px;
+              padding:6px 8px;
+              white-space:nowrap;
+            ">Score N/A</div>
+          `}
+        </div>
+      </div>
+    </div>
+
+    <!-- Infrastructures -->
+    <div style="margin:0 10px 10px 10px;">
+      <div style="font-size:11px; color:#475569; text-transform:uppercase; font-weight:800; margin-bottom:6px;">
+        Infrastructures
+      </div>
+
+      <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        <span style="
+          font-size:12px; padding:5px 8px; border-radius:999px;
+          background:${hasDouche ? '#ecfdf5' : '#fef2f2'};
+          border:1px solid ${hasDouche ? '#a7f3d0' : '#fecaca'};
+          color:${hasDouche ? '#065f46' : '#991b1b'};
+          font-weight:700;
+        ">
+          ${hasDouche ? '🚿 Douches' : '🚫 Douches'}
+        </span>
+
+        <span style="
+          font-size:12px; padding:5px 8px; border-radius:999px;
+          background:#f8fafc; border:1px solid #e2e8f0; color:#0f172a;
+          font-weight:700;
+        ">
+          👕 ${nbVestiaires} vestiaires
+        </span>
+
+        <span style="
+          font-size:12px; padding:5px 8px; border-radius:999px;
+          background:${isHandi ? '#eff6ff' : '#f8fafc'};
+          border:1px solid ${isHandi ? '#bfdbfe' : '#e2e8f0'};
+          color:${isHandi ? '#1d4ed8' : '#475569'};
+          font-weight:700;
+        ">
+          ${isHandi ? '♿ Accès PMR' : 'PMR: non'}
+        </span>
+
+        ${nbTribunes > 0 ? `
+          <span style="
+            font-size:12px; padding:5px 8px; border-radius:999px;
+            background:#fff7ed; border:1px solid #fed7aa; color:#9a3412;
+            font-weight:700;
+          ">
+            🪑 ${nbTribunes} tribunes
+          </span>
         ` : ''}
       </div>
-    `;
+    </div>
+
+    <!-- Transports -->
+    <div style="margin:0 10px 12px 10px;">
+      <div style="font-size:11px; color:#475569; text-transform:uppercase; font-weight:800; margin-bottom:6px;">
+        Transports proches
+      </div>
+
+      <div style="display:grid; gap:8px;">
+        ${[
+          { label:"Bus",  nomField:"arret_bus_nom",   distField:"distance_bus_m",   idField:"arret_bus_id",   icon:"🚌", tint:"#f1f5f9", border:"#e2e8f0" },
+          { label:"Métro",nomField:"arret_metro_nom", distField:"distance_metro_m", idField:"arret_metro_id", icon:"🚇", tint:"#eff6ff", border:"#bfdbfe" },
+          { label:"Tram", nomField:"arret_tram_nom",  distField:"distance_tram_m",  idField:"arret_tram_id",  icon:"🚊", tint:"#ecfdf5", border:"#a7f3d0" },
+        ].map(t => `
+          <div style="
+            background:${t.tint};
+            border:1px solid ${t.border};
+            border-radius:10px;
+            padding:8px 10px;
+            box-shadow:0 1px 2px rgba(15,23,42,.05);
+          ">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+              <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                <div style="font-size:16px;">${t.icon}</div>
+                <div style="min-width:0;">
+                  <div style="font-weight:900; font-size:12px; line-height:1.2;">
+                    ${t.label}
+                  </div>
+                  <div style="
+                    font-size:12px; font-weight:800; margin-top:2px;
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                  ">
+                    ${p[t.nomField] ?? "—"}
+                  </div>
+                </div>
+              </div>
+
+              <div style="text-align:right; flex:0 0 auto;">
+                <div style="font-size:10px; color:#64748b; font-weight:700;">Distance</div>
+                <div style="font-weight:900; font-size:13px;">
+                  ${fmtDist(p[t.distField])}
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:6px; font-size:10px; color:#64748b;">
+              <span style="font-weight:700;">${t.idField}:</span> ${p[t.idField] ?? "—"}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+
+    <!-- CTA -->
+    ${p.equip_url ? `
+      <div style="
+        border-top:1px solid #e2e8f0;
+        padding:10px;
+        text-align:center;
+      ">
+        <a href="${p.equip_url}" target="_blank" style="
+          display:inline-flex;
+          align-items:center;
+          gap:8px;
+          padding:8px 10px;
+          border-radius:12px;
+          background:#2563eb;
+          color:#fff;
+          text-decoration:none;
+          font-size:12px;
+          font-weight:900;
+          box-shadow:0 6px 18px rgba(37,99,235,.18);
+        ">
+          <i class="fa-solid fa-circle-info"></i> Fiche équipement
+        </a>
+      </div>
+    ` : ''}
+  </div>
+`;
+
+
 
     marker.bindPopup(popupHtml).addTo(layer);
   });

@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="fr">
-
 <head>
   <meta charset="UTF-8" />
   <title>DojoFinder - L'outil d'aide au choix</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="index.css">
@@ -19,8 +19,26 @@
       </div>
 
       <div class="sidebar-content">
-        
         <div class="filter-section">
+          <h3>Recherche</h3>
+          <div class="search-box">
+            <input
+              type="text"
+              id="searchInput"
+              placeholder="Rechercher par ville (IDF)..."
+              aria-label="Rechercher par ville"
+              autocomplete="off"
+            />
+            <button
+              type="button"
+              id="clearSearch"
+              class="clear-search-btn"
+              aria-label="Effacer la recherche"
+            >
+              ×
+            </button>
+          </div>
+
           <h3>Niveau Sportif</h3>
           <div id="perf-filters" class="button-group">
             <button type="button" class="active" data-perf="all">Tous</button>
@@ -35,6 +53,9 @@
             <button type="button" id="toggleDouche" class="toggle-btn"> Douches</button>
             <button type="button" id="toggleHandi" class="toggle-btn">♿ Handiaccès</button>
             <button type="button" id="toggleTribune" class="toggle-btn"> Tribunes</button>
+
+            <!-- ✅ Position machine -->
+            <button type="button" id="btnLocateMe" class="toggle-btn">📡 Ma position</button>
           </div>
         </div>
 
@@ -71,8 +92,13 @@
     "use strict";
 
     window.onload = async () => {
+      const IDF_REGION_CODE = "11";
+      const DEFAULT_VIEW = { lat: 48.8566, lng: 2.3522, zoom: 11 };
+
+      let currentCity = null;
+
       // INITIALISATION CARTE
-      const map = L.map('map', { center: [48.8566, 2.3522], zoom: 11 });
+      const map = L.map('map', { center: [DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], zoom: DEFAULT_VIEW.zoom });
       L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
         attribution: '&copy; OpenStreetMap'
       }).addTo(map);
@@ -87,6 +113,85 @@
       let filterHandi = false;  // Confort
       let filterTribune = false;// Confort
 
+      // =========================
+      // RAYON 2KM (AUTO)
+      // =========================
+      let radiusCircle = null;
+
+      function showOrMoveRadiusCircle(lat, lng, radiusMeters = 2000) {
+        const style = {
+          radius: radiusMeters,
+          color: "#3388ff",
+          weight: 2,
+          fill: false,        // ✅ transparent (pas de remplissage)
+          opacity: 0.9,
+          interactive: false
+        };
+
+        if (!radiusCircle) {
+          radiusCircle = L.circle([lat, lng], style).addTo(map);
+        } else {
+          radiusCircle.setLatLng([lat, lng]);
+          radiusCircle.setRadius(radiusMeters);
+          radiusCircle.setStyle(style);
+        }
+      }
+
+      // Priorité: ville -> position machine -> centre carte
+      function updateRadiusCirclePosition() {
+        if (currentCity?.centre?.coordinates) {
+          const [lon, lat] = currentCity.centre.coordinates;
+          showOrMoveRadiusCircle(lat, lon, 2000);
+          return;
+        }
+        if (userLatLng) {
+          showOrMoveRadiusCircle(userLatLng.lat, userLatLng.lng, 2000);
+          return;
+        }
+        const c = map.getCenter();
+        showOrMoveRadiusCircle(c.lat, c.lng, 2000);
+      }
+
+      // =========================
+      // GEOLOC MACHINE
+      // =========================
+      let userLatLng = null;
+      let userMarker = null;
+
+      function locateUser() {
+        if (!("geolocation" in navigator)) {
+          alert("La géolocalisation n'est pas supportée par ce navigateur.");
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const accuracy = pos.coords.accuracy;
+
+            userLatLng = L.latLng(lat, lng);
+            console.log("Coordonnées machine:", lat, lng, "±", Math.round(accuracy), "m");
+
+            map.setView([lat, lng], 15);
+
+            if (!userMarker) {
+              userMarker = L.marker([lat, lng]).addTo(map).bindPopup("Vous êtes ici");
+            } else {
+              userMarker.setLatLng([lat, lng]);
+            }
+
+            // ✅ Affiche automatiquement le rayon 2km autour de la machine
+            updateRadiusCirclePosition();
+          },
+          (err) => {
+            console.error("Erreur géoloc:", err.code, err.message);
+            alert("Impossible de récupérer la position (permission refusée ou HTTPS requis).");
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      }
+
       // CHARGEMENT DATA
       try {
         const response = await fetch("dojo_finder_final_map.geojson");
@@ -96,297 +201,228 @@
       } catch (e) {
         console.error("Erreur chargement GeoJSON:", e);
       }
-function render() {
-  layer.clearLayers();
-  let count = 0;
 
-  features.forEach(f => {
-    const p = f.properties;
+      async function centerMapOnCityIDF(cityName, zoom = 13) {
+        const params = new URLSearchParams({
+          nom: cityName,
+          boost: "population",
+          limit: "20",
+          fields: "nom,centre,codeRegion",
+        });
 
-    // --- 1. FILTRE PERFORMANCE ---
-    // filterPerf peut être "all", "Compétition" ou "Loisir"
-    if (filterPerf !== "all" && p.statut_club !== filterPerf) return;
+        const url = `https://geo.api.gouv.fr/communes?${params.toString()}`;
+        const res = await fetch(url, { headers: { Accept: "application/json" } });
+        if (!res.ok) throw new Error(`geo.api.gouv.fr HTTP ${res.status}`);
 
-    // --- 2. FILTRE CONFORT ---
-    // On vérifie les booléens et les chaines "true" issues du GeoJSON
-    const hasDouche = p.has_douche || p.equip_douche === "true" || p.equip_douche === true;
-    const isHandi = p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true;
-    const nbTribunes = parseInt(p.nb_tribunes || p.equip_trib_nb || 0);
-    const nbVestiaires = parseInt(p.nb_vestiaires || p.equip_vest_sport || 0);
+        const communes = await res.json();
+        const match = communes.find((c) => c.codeRegion === IDF_REGION_CODE && c.centre?.coordinates);
+        if (!match) return null;
 
-    if (filterDouche && !hasDouche) return;
-    if (filterHandi && !isHandi) return;
-    if (filterTribune && nbTribunes <= 0) return;
+        const [lon, lat] = match.centre.coordinates; // GeoJSON: [lon, lat]
+        map.setView([lat, lon], zoom);
 
-    // --- 3. FILTRE ACTIVITÉ ---
-    const aps = String(p.aps_name || "").toLowerCase();
-    if (filterType !== "" && !aps.includes(filterType)) return;
+        return match;
+      }
 
-    count++;
-    
-    // --- STYLE DU MARQUEUR ---
-    // Or pour compétition, Bleu pour loisir
-    const markerColor = p.statut_club === 'Compétition' ? '#fbbf24' : '#3b82f6';
-    const marker = L.circleMarker([f.geometry.coordinates[1], f.geometry.coordinates[0]], {
-      radius: 9,
-      fillColor: markerColor,
-      color: "#ffffff",
-      weight: 2,
-      fillOpacity: 0.9
-    });
+      function render() {
+        layer.clearLayers();
+        let count = 0;
 
-    // --- POPUP STRUCTURÉE (Cahier des charges) ---
-    // Assure-toi que p pointe bien vers les propriétés
+        features.forEach(f => {
+          const p = f.properties;
 
-// Format distance safe (nombre ou string, virgule ou point)
-const fmtDist = (v) => {
-  if (v === null || v === undefined || v === "") return "—";
-  const n = typeof v === "string" ? Number(v.replace(",", ".")) : Number(v);
-  return Number.isFinite(n) ? `${Math.round(n)} m` : "—";
-};
+          if (filterPerf !== "all" && p.statut_club !== filterPerf) return;
 
-const popupHtml = `
-  <div class="custom-popup" style="
-    min-width:240px;
-    max-width:320px;
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    color:#0f172a;
-  ">
-    <!-- Header -->
-    <div style="
-      padding:10px 10px 8px 10px;
-      border-bottom:1px solid #e2e8f0;
-      margin-bottom:10px;
-    ">
-      <div style="display:flex; align-items:flex-start; gap:8px;">
-        <div style="
-          width:10px; height:10px; border-radius:999px;
-          margin-top:5px;
-          background:${markerColor};
-          box-shadow:0 0 0 3px rgba(37,99,235,.08);
-          flex:0 0 auto;
-        "></div>
+          const hasDouche = p.has_douche || p.equip_douche === "true" || p.equip_douche === true;
+          const isHandi = p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true;
+          const nbTribunes = parseInt(p.nb_tribunes || p.equip_trib_nb || 0);
+          const nbVestiaires = parseInt(p.nb_vestiaires || p.equip_vest_sport || 0);
 
-        <div style="flex:1 1 auto;">
-          <div style="
-            font-weight:800;
-            font-size:13px;
-            letter-spacing:.04em;
-            text-transform:uppercase;
-            line-height:1.2;
-            color:#1e3a8a;
-          ">
-            ${p.nom_officiel || p.inst_nom || "—"}
-          </div>
+          if (filterDouche && !hasDouche) return;
+          if (filterHandi && !isHandi) return;
+          if (filterTribune && nbTribunes <= 0) return;
 
-          <div style="
-            margin-top:4px;
-            font-size:12px;
-            color:#64748b;
-            display:flex;
-            align-items:center;
-            gap:6px;
-          ">
-            <i class="fa-solid fa-location-dot"></i>
-            <span>${p.new_name || p.ville || ""}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+          const aps = String(p.aps_name || "").toLowerCase();
+          if (filterType !== "" && !aps.includes(filterType)) return;
 
-    <!-- Niveau -->
-    <div style="
-      background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-      padding:10px;
-      border-radius:10px;
-      margin:0 10px 10px 10px;
-      border:1px solid #e2e8f0;
-      position:relative;
-      overflow:hidden;
-    ">
-      <div style="
-        position:absolute; inset:0;
-        background: radial-gradient(circle at 20% 20%, rgba(59,130,246,.12), transparent 60%);
-        pointer-events:none;
-      "></div>
+          count++;
 
-      <div style="position:relative;">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-          <div>
-            <div style="font-size:11px; color:#475569; text-transform:uppercase; font-weight:700;">
-              Niveau Sportif
-            </div>
-            <div style="font-weight:800; margin-top:2px;">
-              ${p.statut_club === 'Compétition' ? 'Compétition' : 'Loisir'}
-            </div>
-          </div>
+          const markerColor = p.statut_club === 'Compétition' ? '#fbbf24' : '#3b82f6';
+          const marker = L.circleMarker([f.geometry.coordinates[1], f.geometry.coordinates[0]], {
+            radius: 9,
+            fillColor: markerColor,
+            color: "#ffffff",
+            weight: 2,
+            fillOpacity: 0.9
+          });
 
-          ${p.score_global > 0 ? `
-            <div style="
-              text-align:right;
-              background:#fff;
-              border:1px solid #e2e8f0;
-              border-radius:10px;
-              padding:6px 8px;
-              box-shadow:0 1px 2px rgba(15,23,42,.06);
+          const fmtDist = (v) => {
+            if (v === null || v === undefined || v === "") return "—";
+            const n = typeof v === "string" ? Number(v.replace(",", ".")) : Number(v);
+            return Number.isFinite(n) ? `${Math.round(n)} m` : "—";
+          };
+
+          const popupHtml = `
+            <div class="custom-popup" style="
+              min-width:240px;
+              max-width:320px;
+              font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+              color:#0f172a;
             ">
-              <div style="font-weight:900; color:#b45309; font-size:13px;">
-                ${Math.round(Number(p.score_global))} pts
-              </div>
-              <div style="font-size:10px; color:#64748b;">Classement National</div>
-            </div>
-          ` : `
-            <div style="
-              font-size:11px;
-              color:#94a3b8;
-              border:1px dashed #cbd5e1;
-              border-radius:10px;
-              padding:6px 8px;
-              white-space:nowrap;
-            ">Score N/A</div>
-          `}
-        </div>
-      </div>
-    </div>
+              <div style="padding:10px 10px 8px 10px;border-bottom:1px solid #e2e8f0;margin-bottom:10px;">
+                <div style="display:flex; align-items:flex-start; gap:8px;">
+                  <div style="width:10px;height:10px;border-radius:999px;margin-top:5px;background:${markerColor};
+                    box-shadow:0 0 0 3px rgba(37,99,235,.08);flex:0 0 auto;"></div>
 
-    <!-- Infrastructures -->
-    <div style="margin:0 10px 10px 10px;">
-      <div style="font-size:11px; color:#475569; text-transform:uppercase; font-weight:800; margin-bottom:6px;">
-        Infrastructures
-      </div>
-
-      <div style="display:flex; flex-wrap:wrap; gap:6px;">
-        <span style="
-          font-size:12px; padding:5px 8px; border-radius:999px;
-          background:${hasDouche ? '#ecfdf5' : '#fef2f2'};
-          border:1px solid ${hasDouche ? '#a7f3d0' : '#fecaca'};
-          color:${hasDouche ? '#065f46' : '#991b1b'};
-          font-weight:700;
-        ">
-          ${hasDouche ? '🚿 Douches' : '🚫 Douches'}
-        </span>
-
-        <span style="
-          font-size:12px; padding:5px 8px; border-radius:999px;
-          background:#f8fafc; border:1px solid #e2e8f0; color:#0f172a;
-          font-weight:700;
-        ">
-          👕 ${nbVestiaires} vestiaires
-        </span>
-
-        <span style="
-          font-size:12px; padding:5px 8px; border-radius:999px;
-          background:${isHandi ? '#eff6ff' : '#f8fafc'};
-          border:1px solid ${isHandi ? '#bfdbfe' : '#e2e8f0'};
-          color:${isHandi ? '#1d4ed8' : '#475569'};
-          font-weight:700;
-        ">
-          ${isHandi ? '♿ Accès PMR' : 'PMR: non'}
-        </span>
-
-        ${nbTribunes > 0 ? `
-          <span style="
-            font-size:12px; padding:5px 8px; border-radius:999px;
-            background:#fff7ed; border:1px solid #fed7aa; color:#9a3412;
-            font-weight:700;
-          ">
-            🪑 ${nbTribunes} tribunes
-          </span>
-        ` : ''}
-      </div>
-    </div>
-
-    <!-- Transports -->
-    <div style="margin:0 10px 12px 10px;">
-      <div style="font-size:11px; color:#475569; text-transform:uppercase; font-weight:800; margin-bottom:6px;">
-        Transports proches
-      </div>
-
-      <div style="display:grid; gap:8px;">
-        ${[
-          { label:"Bus",  nomField:"arret_bus_nom",   distField:"distance_bus_m",   idField:"arret_bus_id",   icon:"🚌", tint:"#f1f5f9", border:"#e2e8f0" },
-          { label:"Métro",nomField:"arret_metro_nom", distField:"distance_metro_m", idField:"arret_metro_id", icon:"🚇", tint:"#eff6ff", border:"#bfdbfe" },
-          { label:"Tram", nomField:"arret_tram_nom",  distField:"distance_tram_m",  idField:"arret_tram_id",  icon:"🚊", tint:"#ecfdf5", border:"#a7f3d0" },
-        ].map(t => `
-          <div style="
-            background:${t.tint};
-            border:1px solid ${t.border};
-            border-radius:10px;
-            padding:8px 10px;
-            box-shadow:0 1px 2px rgba(15,23,42,.05);
-          ">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-              <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-                <div style="font-size:16px;">${t.icon}</div>
-                <div style="min-width:0;">
-                  <div style="font-weight:900; font-size:12px; line-height:1.2;">
-                    ${t.label}
-                  </div>
-                  <div style="
-                    font-size:12px; font-weight:800; margin-top:2px;
-                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-                  ">
-                    ${p[t.nomField] ?? "—"}
+                  <div style="flex:1 1 auto;">
+                    <div style="font-weight:800;font-size:13px;letter-spacing:.04em;text-transform:uppercase;line-height:1.2;color:#1e3a8a;">
+                      ${p.nom_officiel || p.inst_nom || "—"}
+                    </div>
+                    <div style="margin-top:4px;font-size:12px;color:#64748b;display:flex;align-items:center;gap:6px;">
+                      <i class="fa-solid fa-location-dot"></i>
+                      <span>${p.new_name || p.ville || ""}</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div style="text-align:right; flex:0 0 auto;">
-                <div style="font-size:10px; color:#64748b; font-weight:700;">Distance</div>
-                <div style="font-weight:900; font-size:13px;">
-                  ${fmtDist(p[t.distField])}
+              <div style="background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+                padding:10px;border-radius:10px;margin:0 10px 10px 10px;border:1px solid #e2e8f0;position:relative;overflow:hidden;">
+                <div style="position:absolute; inset:0;background: radial-gradient(circle at 20% 20%, rgba(59,130,246,.12), transparent 60%);pointer-events:none;"></div>
+                <div style="position:relative;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                    <div>
+                      <div style="font-size:11px;color:#475569;text-transform:uppercase;font-weight:700;">Niveau Sportif</div>
+                      <div style="font-weight:800;margin-top:2px;">
+                        ${p.statut_club === 'Compétition' ? 'Compétition' : 'Loisir'}
+                      </div>
+                    </div>
+
+                    ${p.score_global > 0 ? `
+                      <div style="text-align:right;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:6px 8px;box-shadow:0 1px 2px rgba(15,23,42,.06);">
+                        <div style="font-weight:900;color:#b45309;font-size:13px;">
+                          ${Math.round(Number(p.score_global))} pts
+                        </div>
+                        <div style="font-size:10px;color:#64748b;">Classement National</div>
+                      </div>
+                    ` : `
+                      <div style="font-size:11px;color:#94a3b8;border:1px dashed #cbd5e1;border-radius:10px;padding:6px 8px;white-space:nowrap;">
+                        Score N/A
+                      </div>
+                    `}
+                  </div>
                 </div>
               </div>
+
+              <div style="margin:0 10px 10px 10px;">
+                <div style="font-size:11px;color:#475569;text-transform:uppercase;font-weight:800;margin-bottom:6px;">Infrastructures</div>
+                <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                  <span style="font-size:12px;padding:5px 8px;border-radius:999px;
+                    background:${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '#ecfdf5' : '#fef2f2'};
+                    border:1px solid ${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '#a7f3d0' : '#fecaca'};
+                    color:${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '#065f46' : '#991b1b'};
+                    font-weight:700;">
+                    ${(p.has_douche || p.equip_douche === "true" || p.equip_douche === true) ? '🚿 Douches' : '🚫 Douches'}
+                  </span>
+
+                  <span style="font-size:12px;padding:5px 8px;border-radius:999px;background:#f8fafc;border:1px solid #e2e8f0;color:#0f172a;font-weight:700;">
+                    👕 ${parseInt(p.nb_vestiaires || p.equip_vest_sport || 0)} vestiaires
+                  </span>
+
+                  <span style="font-size:12px;padding:5px 8px;border-radius:999px;
+                    background:${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '#eff6ff' : '#f8fafc'};
+                    border:1px solid ${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '#bfdbfe' : '#e2e8f0'};
+                    color:${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '#1d4ed8' : '#475569'};
+                    font-weight:700;">
+                    ${(p.inst_acc_handi_bool === "true" || p.inst_acc_handi_bool === true) ? '♿ Accès PMR' : 'PMR: non'}
+                  </span>
+
+                  ${parseInt(p.nb_tribunes || p.equip_trib_nb || 0) > 0 ? `
+                    <span style="font-size:12px;padding:5px 8px;border-radius:999px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-weight:700;">
+                      🪑 ${parseInt(p.nb_tribunes || p.equip_trib_nb || 0)} tribunes
+                    </span>
+                  ` : ''}
+                </div>
+              </div>
+
+              <div style="margin:0 10px 12px 10px;">
+                <div style="font-size:11px;color:#475569;text-transform:uppercase;font-weight:800;margin-bottom:6px;">Transports proches</div>
+
+                <div style="display:grid; gap:8px;">
+                  ${[
+                    { label:"Bus",  nomField:"arret_bus_nom",   distField:"distance_bus_m",   idField:"arret_bus_id",   icon:"🚌", tint:"#f1f5f9", border:"#e2e8f0" },
+                    { label:"Métro",nomField:"arret_metro_nom", distField:"distance_metro_m", idField:"arret_metro_id", icon:"🚇", tint:"#eff6ff", border:"#bfdbfe" },
+                    { label:"Tram", nomField:"arret_tram_nom",  distField:"distance_tram_m",  idField:"arret_tram_id",  icon:"🚊", tint:"#ecfdf5", border:"#a7f3d0" },
+                  ].map(t => `
+                    <div style="background:${t.tint};border:1px solid ${t.border};border-radius:10px;padding:8px 10px;box-shadow:0 1px 2px rgba(15,23,42,.05);">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                          <div style="font-size:16px;">${t.icon}</div>
+                          <div style="min-width:0;">
+                            <div style="font-weight:900;font-size:12px;line-height:1.2;">${t.label}</div>
+                            <div style="font-size:12px;font-weight:800;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                              ${p[t.nomField] ?? "—"}
+                            </div>
+                          </div>
+                        </div>
+                        <div style="text-align:right;flex:0 0 auto;">
+                          <div style="font-size:10px;color:#64748b;font-weight:700;">Distance</div>
+                          <div style="font-weight:900;font-size:13px;">${fmtDist(p[t.distField])}</div>
+                        </div>
+                      </div>
+                      <div style="margin-top:6px;font-size:10px;color:#64748b;">
+                        <span style="font-weight:700;">${t.idField}:</span> ${p[t.idField] ?? "—"}
+                      </div>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+
+              ${p.equip_url ? `
+                <div style="border-top:1px solid #e2e8f0;padding:10px;text-align:center;">
+                  <a href="${p.equip_url}" target="_blank" style="display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;background:#2563eb;color:#fff;text-decoration:none;font-size:12px;font-weight:900;box-shadow:0 6px 18px rgba(37,99,235,.18);">
+                    <i class="fa-solid fa-circle-info"></i> Fiche équipement
+                  </a>
+                </div>
+              ` : ''}
             </div>
+          `;
 
-            <div style="margin-top:6px; font-size:10px; color:#64748b;">
-              <span style="font-weight:700;">${t.idField}:</span> ${p[t.idField] ?? "—"}
-            </div>
-          </div>
-        `).join("")}
-      </div>
-    </div>
+          marker.bindPopup(popupHtml).addTo(layer);
+        });
 
-    <!-- CTA -->
-    ${p.equip_url ? `
-      <div style="
-        border-top:1px solid #e2e8f0;
-        padding:10px;
-        text-align:center;
-      ">
-        <a href="${p.equip_url}" target="_blank" style="
-          display:inline-flex;
-          align-items:center;
-          gap:8px;
-          padding:8px 10px;
-          border-radius:12px;
-          background:#2563eb;
-          color:#fff;
-          text-decoration:none;
-          font-size:12px;
-          font-weight:900;
-          box-shadow:0 6px 18px rgba(37,99,235,.18);
-        ">
-          <i class="fa-solid fa-circle-info"></i> Fiche équipement
-        </a>
-      </div>
-    ` : ''}
-  </div>
-`;
+        const compteurEl = document.getElementById("compteur");
+        if (compteurEl) {
+          compteurEl.innerHTML = `<span class="count-number">${count}</span> lieux trouvés`;
+        }
+      }
 
+      // =========================
+      // EVENTS
+      // =========================
 
+      // Recherche ville
+      document.getElementById('searchInput').addEventListener('input', async (e) => {
+        const cityName = e.target.value.trim();
+        if (!cityName) return;
 
-    marker.bindPopup(popupHtml).addTo(layer);
-  });
+        currentCity = await centerMapOnCityIDF(cityName);
+        render();
 
-  // Mise à jour du compteur
-  const compteurEl = document.getElementById("compteur");
-  if (compteurEl) {
-    compteurEl.innerHTML = `<span class="count-number">${count}</span> lieux trouvés`;
-  }
-}
+        // le cercle se met à jour dans centerMapOnCityIDF()
+      });
 
-      // GESTION UI
+      // Clear recherche
+      document.getElementById('clearSearch').addEventListener('click', () => {
+        const inp = document.getElementById('searchInput');
+        inp.value = "";
+        currentCity = null;
+
+        map.setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom);
+        render();
+      });
+
+      // Filtres perf
       document.querySelectorAll('#perf-filters button').forEach(btn => {
         btn.onclick = () => {
           document.querySelectorAll('#perf-filters button').forEach(b => b.classList.remove('active'));
@@ -396,6 +432,7 @@ const popupHtml = `
         };
       });
 
+      // Filtres activité
       document.querySelectorAll('#filters-list button').forEach(btn => {
         btn.onclick = () => {
           document.querySelectorAll('#filters-list button').forEach(b => b.classList.remove('active'));
@@ -405,23 +442,31 @@ const popupHtml = `
         };
       });
 
-      // Toggles Confort
+      // Toggles confort
       document.getElementById('toggleDouche').onclick = function() {
         filterDouche = !filterDouche;
-        this.classList.toggle('active');
+        this.classList.toggle('active', filterDouche);
         render();
       };
       document.getElementById('toggleHandi').onclick = function() {
         filterHandi = !filterHandi;
-        this.classList.toggle('active');
+        this.classList.toggle('active', filterHandi);
         render();
       };
       document.getElementById('toggleTribune').onclick = function() {
         filterTribune = !filterTribune;
-        this.classList.toggle('active');
+        this.classList.toggle('active', filterTribune);
         render();
       };
 
+      // Bouton "Ma position"
+      document.getElementById('btnLocateMe').onclick = function () {
+        currentCity = null;
+        document.getElementById('searchInput').value = "";
+        locateUser();
+      };
+
+      // Reset global
       document.querySelector(".reset-btn").onclick = () => {
         location.reload();
       };
